@@ -1,0 +1,232 @@
+name: "conv_lstm"
+layer {
+	name: "data"
+	type: "FlowSeq"
+	top: "flow"
+	top: "label"
+	top: "cont"
+	flow_seq_param {
+		source: "/home/bingbing/Documents/vkittiSeg/flow/flow_seq.txt"
+		batch_size: 2
+		shuffle: true
+		height: 375
+		width: 1242
+		stride: false
+		t: 10
+	}
+}
+
+layer {
+    name: "dummy"
+    type: "Silence"
+    bottom: "cont"
+}
+
+layer {
+	name: "conv1"
+	type: "Convolution"
+	bottom: "flow"
+	top: "conv1"
+	param {
+		lr_mult: 1
+		decay_mult: 1
+	}
+	param {
+		lr_mult: 2
+		decay_mult: 0
+	} 
+	convolution_param {
+		num_output: 16
+		pad: 0
+		kernel_size: 7
+		stride: 4
+		weight_filler {
+			type: "msra"
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+		engine: CAFFE
+		axis: 2
+	}
+}
+
+layer {
+  name: "conv_relu1"
+  type: "ReLU"
+  bottom: "conv1"
+  top: "conv1"
+  relu_param {
+    engine: CAFFE
+  }
+}
+
+layer {
+	name: "conv2"
+	type: "Convolution"
+	bottom: "conv1"
+	top: "conv2"
+	param {
+		lr_mult: 1
+		decay_mult: 1
+	}
+	param {
+		lr_mult: 2
+		decay_mult: 0
+	} 
+	convolution_param {
+		num_output: 32
+		pad: 0
+		kernel_size: 7
+		stride: 4
+		weight_filler {
+			type: "msra"
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+		engine: CAFFE
+		axis: 2
+	}
+}
+
+layer {
+  name: "conv_relu2"
+  type: "ReLU"
+  bottom: "conv2"
+  top: "conv2"
+  relu_param {
+    engine: CAFFE
+  }
+}
+
+layer {
+  name: "deconv1_1"
+  type: "Deconvolution"
+  bottom: "conv2"
+  top: "deconv1_1"
+  param {
+    lr_mult: 1
+    decay_mult: 1
+  }
+  param {
+    lr_mult: 2
+    decay_mult: 0
+  } 
+  convolution_param {
+    num_output: 32
+    pad: 0
+    kernel_size: 7
+    stride: 4
+    weight_filler {
+      type: "msra"
+    }
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+    engine: CAFFE
+    axis: 2
+  }
+}
+
+layer {
+  name: "deconv_relu1_1"
+  type: "ReLU"
+  bottom: "deconv1_1"
+  top: "deconv1_1"
+  relu_param {
+    engine: CAFFE
+  }
+}
+
+layer {
+  name: "deconv1_2"
+  type: "Deconvolution"
+  bottom: "deconv1_1"
+  top: "deconv1_2"
+  param {
+    lr_mult: 1
+    decay_mult: 1
+  }
+  param {
+    lr_mult: 2
+    decay_mult: 0
+  } 
+  convolution_param {
+    num_output: 16
+    pad: 0
+    kernel_size: 7
+    stride: 4
+    weight_filler {
+      type: "msra"
+    }
+    bias_filler {
+      type: "constant"
+      value: 0
+    }
+    engine: CAFFE
+    axis: 2
+  }
+}
+
+layer {
+  name: "deconv_relu1_2"
+  type: "ReLU"
+  bottom: "deconv1_2"
+  top: "deconv1_2"
+  relu_param {
+    engine: CAFFE
+  }
+}
+
+layer {
+  name: "deconv1_2_interp"
+  type: "Interp"
+  bottom: "deconv1_2"
+  top: "deconv1_2_interp"
+  interp_param {
+    height: 375
+    width: 1242
+  }
+}
+
+layer {
+	name: "new_flow"
+	type: "Convolution"
+	bottom: "deconv1_2_interp"
+	top: "new_flow"
+	param {
+		lr_mult: 1
+		decay_mult: 1
+	}
+	param {
+		lr_mult: 2
+		decay_mult: 0
+	} 
+	convolution_param {
+		num_output: 2
+		pad: 1
+		kernel_size: 3
+		stride: 1
+		weight_filler {
+			type: "msra"
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+		engine: CAFFE
+		axis: 2
+	}
+}
+
+layer {
+	name: "loss"
+	type: "EuclideanLoss"
+	bottom: "new_flow"
+	bottom: "label"
+	top: "loss"
+}
