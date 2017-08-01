@@ -1,0 +1,191 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/core.hpp"
+#include "opencv2/core/cuda.hpp"
+#include "opencv2/cudaoptflow.hpp"
+#include "opencv2/cudaarithm.hpp"
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include "H5Cpp.h"
+using namespace H5;
+using namespace std;
+using namespace cv;
+using namespace cv::cuda;
+#define PATHLENGTH 100
+#define NEWSIZE 224
+
+bool sortByName(const struct dirent& d1, const struct dirent& d2)
+{
+    int r = strcmp((const char*)d1.d_name, (const char*)d2.d_name);
+    if(r < 0)
+    	return true;
+    else
+    	return false;
+}
+
+void readall(DIR* dir, vector<struct dirent>& v,int flag)//flag 1 for dir and 2 for file
+{
+    struct dirent* temp;
+    while(1)
+    {
+        temp = readdir(dir);
+        if(temp == NULL)
+        {
+        	if(flag == 2)
+        	{
+        		vector<struct dirent>::iterator it;
+        		std::sort(v.begin(),v.end(),sortByName);
+        	}
+            return;
+        }
+        else if(strcmp(temp->d_name,".") == 0 || strcmp(temp->d_name,"..") == 0) // exclude "." and ".."
+            continue;
+        else
+        {
+            v.push_back(*temp);
+        }
+    }
+}
+
+bool myread(vector<struct dirent>& v, struct dirent* out,int pos)
+{
+    struct dirent temp;
+    if(pos >= v.size())
+        return false;
+    else
+    {
+        temp = v.at(pos);
+        memcpy((void*)out, (void*)&temp, sizeof(struct dirent));
+        return true;
+    }
+}
+
+void calc_optical_flow(char* file1, char* file2, Mat& flowx, Mat& flowy, Size new_size)
+{
+    //read images
+    Mat img1 = imread(file1,IMREAD_GRAYSCALE);
+    Mat img2 = imread(file2,IMREAD_GRAYSCALE);
+	resize(img1, img1, new_size);
+	resize(img2, img2, new_size);
+    Mat optFlow;
+    //start time
+    //const int64 start = getTickCount();
+    //upload images to gpu device
+    GpuMat gpu_img1(img1);
+    GpuMat gpu_img2(img2);
+    GpuMat gpu_flow(img1.size(),CV_32FC2);
+    //declare methods of calculating optical flow
+    Ptr<cuda::BroxOpticalFlow> brox = cuda::BroxOpticalFlow::create(0.197f,50.0f,0.8f,10,77,10);
+    //Ptr<cuda::DensePyrLKOpticalFlow> lk = cuda::DensePyrLKOpticalFlow::create(Size(7, 7));
+    //Ptr<cuda::FarnebackOpticalFlow> farn = cuda::FarnebackOpticalFlow::create();
+    //Ptr<cuda::OpticalFlowDual_TVL1> tvl1 = cuda::OpticalFlowDual_TVL1::create();
+
+    //calc optical flow map
+    //Brox
+    {
+        GpuMat gpu_img1f;
+        GpuMat gpu_img2f;
+        gpu_img1.convertTo(gpu_img1f,CV_32F,1.0/255.0);
+        gpu_img2.convertTo(gpu_img2f,CV_32F,1.0/255.0);
+
+        brox->calc(gpu_img1f,gpu_img2f,gpu_flow);
+    }
+
+    GpuMat planes[2];
+    cuda::split(gpu_flow, planes);
+
+    planes[0].download(flowx);
+    planes[1].download(flowy);
+
+    //end time
+    //const double timeSec = (getTickCount() - start) / getTickFrequency();
+   // cout << "Brox: " << timeSec << " seconds" << endl;
+}
+
+
+
+int main(int argc,char*argv[])
+{
+	setDevice(0);
+    //dataset path
+    char dataset_path[PATHLENGTH] = "/home/luowx/action_recognition_summer/UCF101_frames/";
+    string save_path = "/home/luowx/action_recognition_summer/UCF101_optical_flow/";
+    chdir(dataset_path);
+    struct dirent dirs;
+    struct dirent file1;
+    struct dirent file2;
+    int dir_pos = 0;
+    double min;
+
+	Size new_size(NEWSIZE, NEWSIZE);
+    DIR* dir = opendir(dataset_path);
+    if(dir == NULL)
+    {
+    	cout << "open dir fails" << endl;
+    	return 0;
+    }
+    Mat flowx, flowy;
+    vector<struct dirent> v_dir;
+    readall(dir,v_dir,1);
+    for(int i = 0;i < v_dir.size();++ i)
+    {
+    	myread(v_dir,&dirs,i);
+    	//mkdir((save_path + string(dirs.d_name)).c_str(),S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+        int file_pos = 0;
+        DIR* subdir = opendir(dirs.d_name);
+        if(subdir == NULL)
+		{
+			cout << "open subdir fails" << endl;
+			return 0;
+		}
+        vector<struct dirent> v_file;
+        readall(subdir,v_file,2);
+        chdir(dirs.d_name);
+        myread(v_file,&file1,file_pos ++);
+        cout << "calc " << i << " : " << dirs.d_name << endl;
+
+		//initial hdf5
+		const H5std_string FILE_NAME(save_path + "/" + string(dirs.d_name) + ".h5");
+		const H5std_string DATASET_NAME("optical_flow");
+		H5File file(FILE_NAME, H5F_ACC_TRUNC);
+		hsize_t fdim[4] = {v_file.size() - 1,2,NEWSIZE,NEWSIZE};
+		hsize_t mdim[4] = {1,1,NEWSIZE,NEWSIZE};
+		DataSpace fspace(4, fdim);
+		DataSpace mspace(4, mdim);
+		DataSet dataset = file.createDataSet(DATASET_NAME, PredType::NATIVE_FLOAT, fspace);
+		hsize_t start[3];
+		hsize_t stride[3];
+		hsize_t count[3];
+		hsize_t block[3];
+		start[0] = 0; start[1] = 0; start[2] = 0; start[3] = 0;
+		stride[0] = 1; stride[1] = 1; stride[2] = 1; stride[3] = 1;
+		count[0] = 1; count[1] = 1; count[2] = 1; count[3] = 1;
+		block[0] = 1; block[1] = 1; block[2] = NEWSIZE; block[3] = NEWSIZE;
+		mspace.selectHyperslab(H5S_SELECT_SET, count, start, stride, block);
+		//initial hdf5 end
+
+        while((myread(v_file,&file2,file_pos ++)))
+        {
+            calc_optical_flow(file1.d_name,file2.d_name,flowx,flowy,new_size);
+			start[0] = file_pos - 1;start[1] = 0;
+            fspace.selectHyperslab(H5S_SELECT_SET, count, start, stride, block);
+			dataset.write((void*)flowx.ptr(), PredType::NATIVE_FLOAT, mspace, fspace);
+			fspace.selectNone();
+			start[1] = 1;
+			fspace.selectHyperslab(H5S_SELECT_SET, count, start, stride, block);
+			dataset.write((void*)flowy.ptr(), PredType::NATIVE_FLOAT, mspace, fspace);
+            file1 = file2;
+        }
+        closedir(subdir);
+        chdir("..");
+		delete subdir;
+    }
+	delete dir;
+    return 0;
+}
+
