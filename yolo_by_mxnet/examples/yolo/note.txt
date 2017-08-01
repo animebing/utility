@@ -1,0 +1,4 @@
+in function of InceptionFactoryB in symbol.py, there is comment of # pool + proj, but there is only pooling, no proj, what happened here? 
+network written by Jiajia is much deeper than that in YOLO
+
+we should focus on total loss, not separate loss. IoU, ACCURACY
